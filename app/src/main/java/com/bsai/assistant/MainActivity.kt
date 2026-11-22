@@ -21,12 +21,17 @@ import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.WindowManager
-import android.widget.*
+import android.widget.Button
+import android.widget.EditText
+import android.widget.LinearLayout
+import android.widget.ScrollView
+import android.widget.TextView
+import android.widget.Toast
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.Locale
+import kotlin.concurrent.thread
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
@@ -34,324 +39,334 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         "https://bsaiassistant.bashudebsarkar61.workers.dev"
 
     private lateinit var tts: TextToSpeech
-    private var speechRecognizer: SpeechRecognizer? = null
-    private lateinit var recognizerIntent: Intent
-
     private lateinit var statusText: TextView
-    private lateinit var messageInput: EditText
-    private lateinit var micButton: TextView
+    private lateinit var answerText: TextView
+    private lateinit var inputText: EditText
+    private lateinit var micButton: Button
+
+    private var speechRecognizer: SpeechRecognizer? = null
+    private var listeningEnabled = false
+    private var isSpeaking = false
+    private var isRecognizing = false
+    private var ttsReady = false
 
     private val handler = Handler(Looper.getMainLooper())
 
-    private var listeningEnabled = false
-    private var ttsReady = false
-    private var isRecognizing = false
-    private var currentVoice = "female"
-
-    private val micPermission = 101
-
-    private val restartListeningRunnable = Runnable {
-        if (listeningEnabled && !isSpeaking) {
+    private val restartListening = Runnable {
+        if (listeningEnabled && !isSpeaking && !isRecognizing) {
             startListening()
         }
     }
 
-    private var isSpeaking = false
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        window.statusBarColor = Color.rgb(8, 13, 35)
-        window.navigationBarColor = Color.rgb(8, 13, 35)
-        window.setSoftInputMode(
-            WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
-        )
+        window.statusBarColor = Color.rgb(8, 15, 40)
+        window.navigationBarColor = Color.rgb(8, 15, 40)
+
+        createScreen()
 
         tts = TextToSpeech(this, this)
 
-        createInterface()
         setupSpeechRecognizer()
+
+        speak("BS AI Assistant-এ আপনাকে স্বাগতম।")
     }
 
-    private fun createInterface() {
-        val screenHeight = resources.displayMetrics.heightPixels
-        val panelHeight = (screenHeight * 0.82f).toInt()
-
-        val outer = FrameLayout(this).apply {
-            setBackgroundColor(Color.rgb(7, 11, 30))
+    private fun createScreen() {
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setPadding(18, 18, 18, 18)
+            setBackgroundColor(Color.rgb(5, 10, 28))
         }
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
-            setPadding(dp(18), dp(18), dp(18), dp(18))
-            background = rounded(Color.rgb(17, 25, 58), 28)
-        }
-
-        val panelParams = FrameLayout.LayoutParams(
-            ViewGroup.LayoutParams.MATCH_PARENT,
-            panelHeight,
-            Gravity.CENTER
-        ).apply {
-            leftMargin = dp(16)
-            rightMargin = dp(16)
+            setPadding(18, 22, 18, 20)
+            background = roundedBackground(
+                Color.rgb(15, 27, 62),
+                28
+            )
         }
 
         val title = TextView(this).apply {
             text = "BS AI ASSISTANT"
-            textSize = 23f
-            gravity = Gravity.CENTER
+            textSize = 25f
             setTextColor(Color.WHITE)
-            typeface = Typeface.create(
-                "sans-serif-black", Typeface.BOLD
-            )
-            letterSpacing = 0.08f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
         }
-
-        panel.addView(
-            title,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(48)
-            )
-        )
 
         val orb = AIOrbView(this)
 
+        statusText = TextView(this).apply {
+            text = "আপনার প্রশ্ন লিখুন অথবা মাইক্রোফোন চাপুন"
+            textSize = 14f
+            setTextColor(Color.LTGRAY)
+            gravity = Gravity.CENTER
+            setPadding(5, 12, 5, 15)
+        }
+
+        answerText = TextView(this).apply {
+            text = "আমি আপনাকে সাহায্য করতে প্রস্তুত।"
+            textSize = 16f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(10, 12, 10, 12)
+        }
+
+        val scroll = ScrollView(this)
+        scroll.addView(answerText)
+
+        inputText = EditText(this).apply {
+            hint = "এখানে আপনার প্রশ্ন লিখুন..."
+            setHintTextColor(Color.LTGRAY)
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            setPadding(15, 12, 15, 12)
+            background = roundedBackground(
+                Color.rgb(34, 48, 82),
+                18
+            )
+        }
+
+        val sendButton = Button(this).apply {
+            text = "প্রশ্ন পাঠান"
+            setOnClickListener {
+                val question = inputText.text.toString().trim()
+                if (question.isNotEmpty()) {
+                    inputText.setText("")
+                    handleCommand(question)
+                } else {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "আগে একটি প্রশ্ন লিখুন",
+                        Toast.LENGTH_SHORT
+                    ).show()
+                }
+            }
+        }
+
+        micButton = Button(this).apply {
+            text = "🎤 কথা বলুন"
+            setOnClickListener {
+                if (listeningEnabled) {
+                    stopVoiceMode()
+                } else {
+                    startVoiceMode()
+                }
+            }
+        }
+
+        panel.addView(title)
         panel.addView(
             orb,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+                155
+            )
+        )
+        panel.addView(statusText)
+
+        panel.addView(
+            scroll,
+            LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                100
             )
         )
 
-        statusText = TextView(this).apply {
-            text = "আপনার নির্দেশের অপেক্ষায়"
-            textSize = 14f
-            gravity = Gravity.CENTER
-            setTextColor(Color.rgb(190, 205, 255))
-        }
-
         panel.addView(
-            statusText,
+            inputText,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(35)
-            )
-        )
-
-        messageInput = EditText(this).apply {
-            hint = "এখানে লিখুন..."
-            textSize = 15f
-            setTextColor(Color.WHITE)
-            setHintTextColor(Color.LTGRAY)
-            setPadding(dp(14), 0, dp(14), 0)
-            background = rounded(Color.rgb(35, 47, 83), 18)
-        }
-
-        panel.addView(
-            messageInput,
-            LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(48)
+                ViewGroup.LayoutParams.WRAP_CONTENT
             ).apply {
-                bottomMargin = dp(10)
+                bottomMargin = 10
             }
         )
 
-        val controls = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
+        panel.addView(sendButton)
+        panel.addView(micButton)
 
-        val sendButton = makeButton(
-            "পাঠান", Color.rgb(37, 115, 220)
-        )
-
-        micButton = makeButton(
-            "🎤", Color.rgb(20, 155, 120)
-        )
-
-        controls.addView(
-            micButton,
-            LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-                rightMargin = dp(6)
-            }
-        )
-
-        controls.addView(
-            sendButton,
-            LinearLayout.LayoutParams(0, dp(48), 1f).apply {
-                leftMargin = dp(6)
-            }
-        )
-
-        panel.addView(
-            controls,
+        root.addView(
+            panel,
             LinearLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
-                dp(48)
+                ViewGroup.LayoutParams.WRAP_CONTENT
             )
         )
 
-        sendButton.setOnClickListener {
-            val text = messageInput.text.toString().trim()
-
-            if (text.isNotEmpty()) {
-                messageInput.setText("")
-                handleCommand(text)
-            }
-        }
-
-        micButton.setOnClickListener {
-            if (!listeningEnabled) {
-                startVoiceMode()
-            } else {
-                stopVoiceMode()
-            }
-        }
-
-        outer.addView(panel, panelParams)
-        setContentView(outer)
+        setContentView(root)
     }
 
-    private fun makeButton(
-        text: String,
-        color: Int
-    ): TextView {
-        return TextView(this).apply {
-            this.text = text
-            textSize = 16f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            typeface = Typeface.DEFAULT_BOLD
-            background = rounded(color, 16)
-        }
-    }
-
-    private fun rounded(
+    private fun roundedBackground(
         color: Int,
         radius: Int
     ): GradientDrawable {
         return GradientDrawable().apply {
             setColor(color)
-            cornerRadius = dp(radius).toFloat()
+            cornerRadius = radius.toFloat()
         }
     }
 
-    private fun dp(value: Int): Int {
-        return (
-            value * resources.displayMetrics.density
-        ).toInt()
-    }
-
-    // বাংলা Text-to-Speech চালু
     override fun onInit(status: Int) {
-        if (status != TextToSpeech.SUCCESS) {
-            statusText.text = "ভয়েস চালু করা যায়নি"
-            return
-        }
+        if (status == TextToSpeech.SUCCESS) {
+            var result = tts.setLanguage(Locale("bn", "BD"))
 
-        val banglaBD = Locale("bn", "BD")
-        val banglaIN = Locale("bn", "IN")
-        val bangla = Locale("bn")
+            if (result == TextToSpeech.LANG_MISSING_DATA ||
+                result == TextToSpeech.LANG_NOT_SUPPORTED
+            ) {
+                result = tts.setLanguage(Locale("bn", "IN"))
+            }
 
-        var languageResult = tts.setLanguage(banglaBD)
+            if (result == TextToSpeech.LANG_MISSING_DATA ||
+                result == TextToSpeech.LANG_NOT_SUPPORTED
+            ) {
+                tts.setLanguage(Locale("bn"))
+            }
 
-        if (
-            languageResult == TextToSpeech.LANG_MISSING_DATA ||
-            languageResult == TextToSpeech.LANG_NOT_SUPPORTED
-        ) {
-            languageResult = tts.setLanguage(banglaIN)
-        }
+            tts.setSpeechRate(0.95f)
+            ttsReady = true
 
-        if (
-            languageResult == TextToSpeech.LANG_MISSING_DATA ||
-            languageResult == TextToSpeech.LANG_NOT_SUPPORTED
-        ) {
-            languageResult = tts.setLanguage(bangla)
-        }
+            tts.setOnUtteranceProgressListener(
+                object : UtteranceProgressListener() {
 
-        if (
-            languageResult == TextToSpeech.LANG_MISSING_DATA ||
-            languageResult == TextToSpeech.LANG_NOT_SUPPORTED
-        ) {
-            statusText.text = "ফোনে বাংলা ভয়েস ইনস্টল করুন"
-            return
-        }
-
-        ttsReady = true
-        tts.setSpeechRate(0.95f)
-        tts.setPitch(1.0f)
-
-        tts.setOnUtteranceProgressListener(
-            object : UtteranceProgressListener() {
-
-                override fun onStart(id: String?) {
-                    handler.post {
+                    override fun onStart(utteranceId: String?) {
                         isSpeaking = true
                     }
-                }
 
-                override fun onDone(id: String?) {
-                    handler.post {
+                    override fun onDone(utteranceId: String?) {
                         isSpeaking = false
+                        handler.postDelayed(restartListening, 10000)
+                    }
 
-                        if (listeningEnabled) {
-                            scheduleListening(10000)
-                        } else {
-                            statusText.text =
-                                "আপনার নির্দেশের অপেক্ষায়"
-                        }
+                    override fun onError(utteranceId: String?) {
+                        isSpeaking = false
+                        handler.postDelayed(restartListening, 2000)
                     }
                 }
-
-                override fun onError(id: String?) {
-                    handler.post {
-                        isSpeaking = false
-
-                        if (listeningEnabled) {
-                            scheduleListening(3000)
-                        }
-                    }
-                }
-            }
-        )
-
-        speak("BS AI Assistant-এ আপনাকে স্বাগতম।")
-    }
-
-    // উত্তর বলার ব্যবস্থা
-    private fun speak(text: String) {
-        if (!ttsReady || text.isBlank()) return
-
-        runOnUiThread {
-            handler.removeCallbacks(restartListeningRunnable)
-
-            isSpeaking = true
-            statusText.text = "উত্তর দিচ্ছি..."
-
-            tts.speak(
-                text,
-                TextToSpeech.QUEUE_FLUSH,
-                null,
-                "BS_AI_REPLY"
             )
         }
     }
 
-    // ভয়েস রিকগনিশন তৈরি
-    private fun setupSpeechRecognizer() {
-        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
-            statusText.text = "এই ফোনে Voice Recognition নেই"
+    private fun speak(message: String) {
+        if (!ttsReady) {
+            answerText.text = message
             return
         }
 
-        recognizerIntent = Intent(
-            RecognizerIntent.ACTION_RECOGNIZE_SPEECH
-        ).apply {
+        isSpeaking = true
+        tts.speak(
+            message,
+            TextToSpeech.QUEUE_FLUSH,
+            null,
+            "BS_AI_REPLY"
+        )
+    }
+
+    private fun setupSpeechRecognizer() {
+        if (!SpeechRecognizer.isRecognitionAvailable(this)) {
+            statusText.text = "এই ফোনে Voice Recognition পাওয়া যাচ্ছে না"
+            return
+        }
+
+        speechRecognizer =
+            SpeechRecognizer.createSpeechRecognizer(this)
+
+        speechRecognizer?.setRecognitionListener(
+            object : RecognitionListener {
+
+                override fun onReadyForSpeech(params: Bundle?) {
+                    statusText.text = "আমি শুনছি..."
+                    isRecognizing = true
+                }
+
+                override fun onBeginningOfSpeech() {}
+
+                override fun onRmsChanged(rmsdB: Float) {}
+
+                override fun onBufferReceived(buffer: ByteArray?) {}
+
+                override fun onEndOfSpeech() {
+                    statusText.text = "আপনার কথা বুঝছি..."
+                }
+
+                override fun onError(error: Int) {
+                    isRecognizing = false
+
+                    if (listeningEnabled) {
+                        statusText.text = "আবার শুনতে প্রস্তুত হচ্ছি..."
+                        handler.removeCallbacks(restartListening)
+                        handler.postDelayed(restartListening, 2000)
+                    }
+                }
+
+                override fun onResults(results: Bundle?) {
+                    isRecognizing = false
+
+                    val matches = results?.getStringArrayList(
+                        SpeechRecognizer.RESULTS_RECOGNITION
+                    )
+
+                    val question = matches?.firstOrNull()
+
+                    if (!question.isNullOrBlank()) {
+                        handleCommand(question)
+                    } else if (listeningEnabled) {
+                        handler.postDelayed(restartListening, 2000)
+                    }
+                }
+
+                override fun onPartialResults(
+                    partialResults: Bundle?
+                ) {}
+
+                override fun onEvent(
+                    eventType: Int,
+                    params: Bundle?
+                ) {}
+            }
+        )
+    }
+
+    private fun startVoiceMode() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(
+                arrayOf(Manifest.permission.RECORD_AUDIO),
+                101
+            )
+            return
+        }
+
+        listeningEnabled = true
+        micButton.text = "🔴 কথা বলা বন্ধ"
+        startListening()
+    }
+
+    private fun stopVoiceMode() {
+        listeningEnabled = false
+        isRecognizing = false
+        handler.removeCallbacks(restartListening)
+        speechRecognizer?.cancel()
+        micButton.text = "🎤 কথা বলুন"
+        statusText.text = "ভয়েস বন্ধ আছে"
+    }
+
+    private fun startListening() {
+        if (!listeningEnabled || isSpeaking || isRecognizing) {
+            return
+        }
+
+        if (speechRecognizer == null) {
+            setupSpeechRecognizer()
+        }
+
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
             putExtra(
                 RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                 RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
@@ -365,156 +380,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 "bn-BD"
             )
             putExtra(
-                RecognizerIntent.EXTRA_MAX_RESULTS,
-                3
-            )
-            putExtra(
                 RecognizerIntent.EXTRA_PARTIAL_RESULTS,
                 false
             )
         }
 
-        createRecognizer()
-    }
-
-    private fun createRecognizer() {
         try {
-            speechRecognizer?.destroy()
-
-            speechRecognizer =
-                SpeechRecognizer.createSpeechRecognizer(this)
-
-            speechRecognizer?.setRecognitionListener(
-                object : RecognitionListener {
-
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        isRecognizing = true
-                        statusText.text = "বলুন, আমি শুনছি..."
-                    }
-
-                    override fun onBeginningOfSpeech() {
-                        statusText.text = "শুনছি..."
-                    }
-
-                    override fun onRmsChanged(rmsdB: Float) {}
-
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-
-                    override fun onEndOfSpeech() {
-                        statusText.text = "আপনার কথা বুঝছি..."
-                    }
-
-                    override fun onError(error: Int) {
-                        isRecognizing = false
-
-                        if (listeningEnabled && !isSpeaking) {
-                            if (
-                                error == SpeechRecognizer.ERROR_NO_MATCH ||
-                                error == SpeechRecognizer.ERROR_SPEECH_TIMEOUT
-                            ) {
-                                statusText.text = "আবার বলুন..."
-                                scheduleListening(1500)
-                            } else {
-                                statusText.text =
-                                    "ভয়েস আবার চালু হচ্ছে..."
-                                scheduleListening(2500)
-                            }
-                        }
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        isRecognizing = false
-
-                        val words = results?.getStringArrayList(
-                            SpeechRecognizer.RESULTS_RECOGNITION
-                        )
-
-                        val spokenText = words?.firstOrNull()
-
-                        if (!spokenText.isNullOrBlank()) {
-                            handleCommand(spokenText)
-                        } else if (listeningEnabled) {
-                            scheduleListening(1500)
-                        }
-                    }
-
-                    override fun onPartialResults(results: Bundle?) {}
-
-                    override fun onEvent(
-                        eventType: Int,
-                        params: Bundle?
-                    ) {}
-                }
-            )
-
-        } catch (e: Exception) {
-            statusText.text = "মাইক্রোফোন প্রস্তুত করা যায়নি"
-        }
-    }
-
-    private fun startVoiceMode() {
-        if (
-            checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED
-        ) {
-            requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO),
-                micPermission
-            )
-            return
-        }
-
-        if (speechRecognizer == null) {
-            createRecognizer()
-        }
-
-        listeningEnabled = true
-        micButton.text = "বন্ধ করুন"
-
-        startListening()
-    }
-
-    private fun stopVoiceMode() {
-        listeningEnabled = false
-        isRecognizing = false
-
-        handler.removeCallbacksAndMessages(null)
-
-        try {
-            speechRecognizer?.cancel()
-        } catch (_: Exception) {}
-
-        micButton.text = "🎤"
-        statusText.text = "ভয়েস বন্ধ আছে"
-    }
-
-    private fun scheduleListening(delay: Long) {
-        handler.removeCallbacks(restartListeningRunnable)
-
-        if (listeningEnabled) {
-            handler.postDelayed(
-                restartListeningRunnable,
-                delay
-            )
-        }
-    }
-
-    private fun startListening() {
-        if (!listeningEnabled || isSpeaking) return
-
-        try {
-            if (speechRecognizer == null) {
-                createRecognizer()
-            }
-
-            if (isRecognizing) return
-
-            speechRecognizer?.startListening(recognizerIntent)
-
+            isRecognizing = true
+            speechRecognizer?.startListening(intent)
         } catch (e: Exception) {
             isRecognizing = false
-            statusText.text = "আবার মাইক্রোফোন চালু হচ্ছে..."
-            scheduleListening(2500)
+            statusText.text = "মাইক্রোফোন চালু করা যায়নি"
         }
     }
 
@@ -529,333 +405,281 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             grantResults
         )
 
-        if (
-            requestCode == micPermission &&
+        if (requestCode == 101 &&
             grantResults.isNotEmpty() &&
             grantResults[0] == PackageManager.PERMISSION_GRANTED
         ) {
             startVoiceMode()
         } else {
-            statusText.text = "মাইক্রোফোন অনুমতি প্রয়োজন"
+            Toast.makeText(
+                this,
+                "মাইক্রোফোন ব্যবহারের অনুমতি প্রয়োজন",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
-    // নির্দেশ বুঝে কাজ করা
     private fun handleCommand(original: String) {
-        val command = original.lowercase(Locale.ROOT).trim()
+        val command = original.lowercase(Locale.getDefault())
 
-        if (
-            command.contains("কে তৈরি") ||
-            command.contains("কে বানিয়েছে") ||
-            command.contains("তোমার নির্মাতা")
+        answerText.text = original
+
+        if (command.contains("তোমাকে কে তৈরি") ||
+            command.contains("তোমার নির্মাতা") ||
+            command.contains("কে বানিয়েছে")
         ) {
-            speak("আমাকে বাসুদেব সরকার তৈরি করেছেন।")
+            reply("আমাকে বাসুদেব সরকার তৈরি করেছেন।")
+            return
+        }
+
+        if (command.contains("নিচে স্ক্রল")) {
+            sendPhoneCommand("scroll_down")
+            reply("নিচে স্ক্রল করছি।")
+            return
+        }
+
+        if (command.contains("উপরে স্ক্রল")) {
+            sendPhoneCommand("scroll_up")
+            reply("উপরে স্ক্রল করছি।")
+            return
+        }
+
+        if (command.contains("পিছনে যাও")) {
+            sendPhoneCommand("back")
+            reply("পিছনে যাচ্ছি।")
+            return
+        }
+
+        if (command.contains("হোমে যাও")) {
+            sendPhoneCommand("home")
+            reply("হোমে যাচ্ছি।")
             return
         }
 
         if (command.contains("মহিলা কণ্ঠ")) {
-            currentVoice = "female"
-            changeVoice()
-            speak("ঠিক আছে, এখন মহিলা কণ্ঠে কথা বলার চেষ্টা করব।")
+            changeVoice(true)
             return
         }
 
         if (command.contains("পুরুষ কণ্ঠ")) {
-            currentVoice = "male"
-            changeVoice()
-            speak("ঠিক আছে, এখন পুরুষ কণ্ঠে কথা বলার চেষ্টা করব।")
+            changeVoice(false)
             return
         }
 
-        if (
-            command.contains("নিচে স্ক্রল") ||
-            command.contains("উপরে স্ক্রল") ||
-            command.contains("পিছনে যাও") ||
-            command.contains("হোমে যাও")
-        ) {
-            val intent = Intent(
-                PhoneControlService.ACTION_COMMAND
-            ).apply {
-                setPackage(packageName)
-                putExtra("command", original)
-            }
-
-            sendBroadcast(intent)
-            speak("ঠিক আছে।")
+        if (openApp(command)) {
             return
-        }
-
-        val apps = mapOf(
-            "facebook" to "com.facebook.katana",
-            "ফেসবুক" to "com.facebook.katana",
-            "tiktok" to "com.zhiliaoapp.musically",
-            "টিকটক" to "com.zhiliaoapp.musically",
-            "youtube" to "com.google.android.youtube",
-            "ইউটিউব" to "com.google.android.youtube",
-            "whatsapp" to "com.whatsapp",
-            "হোয়াটসঅ্যাপ" to "com.whatsapp",
-            "instagram" to "com.instagram.android",
-            "ইনস্টাগ্রাম" to "com.instagram.android"
-        )
-
-        for ((name, appPackage) in apps) {
-            if (command.contains(name)) {
-                openApp(appPackage)
-                return
-            }
         }
 
         askGemini(original)
     }
 
-    private fun changeVoice() {
+    private fun reply(message: String) {
+        answerText.text = message
+        statusText.text = "উত্তর দেওয়া হচ্ছে..."
+        speak(message)
+    }
+
+    private fun sendPhoneCommand(command: String) {
+        try {
+            val intent = Intent(
+                PhoneControlService.ACTION_COMMAND
+            ).apply {
+                setPackage(packageName)
+                putExtra("command", command)
+            }
+
+            sendBroadcast(intent)
+        } catch (e: Exception) {
+            statusText.text = "ফোন কন্ট্রোল কমান্ড পাঠানো যায়নি"
+        }
+    }
+
+    private fun openApp(command: String): Boolean {
+        val apps = listOf(
+            Triple("facebook", "com.facebook.katana", "Facebook"),
+            Triple("টিকটক", "com.zhiliaoapp.musically", "TikTok"),
+            Triple("tiktok", "com.zhiliaoapp.musically", "TikTok"),
+            Triple("ইউটিউব", "com.google.android.youtube", "YouTube"),
+            Triple("youtube", "com.google.android.youtube", "YouTube"),
+            Triple("হোয়াটসঅ্যাপ", "com.whatsapp", "WhatsApp"),
+            Triple("whatsapp", "com.whatsapp", "WhatsApp"),
+            Triple("ইনস্টাগ্রাম", "com.instagram.android", "Instagram"),
+            Triple("instagram", "com.instagram.android", "Instagram")
+        )
+
+        for ((keyword, packageName, appName) in apps) {
+            if (command.contains(keyword)) {
+                val launchIntent =
+                    packageManager.getLaunchIntentForPackage(packageName)
+
+                if (launchIntent != null) {
+                    startActivity(launchIntent)
+                    reply("$appName খুলছি।")
+                } else {
+                    reply("$appName অ্যাপটি ফোনে ইনস্টল করা নেই।")
+                }
+
+                return true
+            }
+        }
+
+        return false
+    }
+
+    private fun changeVoice(female: Boolean) {
         if (!ttsReady) return
 
-        try {
-            val voices = tts.voices ?: return
+        val voices = tts.voices ?: return
 
-            val matchingVoice = voices.firstOrNull {
-                val name = it.name.lowercase(Locale.ROOT)
+        val selected = voices.firstOrNull { voice ->
+            val name = voice.name.lowercase(Locale.ROOT)
 
-                if (currentVoice == "female") {
-                    name.contains("female") ||
-                    name.contains("woman")
-                } else {
-                    name.contains("male") ||
-                    name.contains("man")
-                }
-            }
-
-            if (matchingVoice != null) {
-                tts.voice = matchingVoice
-            }
-
-        } catch (_: Exception) {}
-    }
-
-    private fun openApp(appPackage: String) {
-        try {
-            val launchIntent =
-                packageManager.getLaunchIntentForPackage(appPackage)
-
-            if (launchIntent != null) {
-                startActivity(launchIntent)
-                speak("অ্যাপটি খুলছি।")
+            if (female) {
+                name.contains("female") || name.contains("woman")
             } else {
-                speak("এই অ্যাপটি ফোনে ইনস্টল করা নেই।")
+                name.contains("male") || name.contains("man")
             }
+        }
 
-        } catch (_: Exception) {
-            speak("অ্যাপটি খোলা যাচ্ছে না।")
+        if (selected != null) {
+            tts.voice = selected
+            reply(
+                if (female) "মহিলা কণ্ঠ নির্বাচন করা হয়েছে।"
+                else "পুরুষ কণ্ঠ নির্বাচন করা হয়েছে।"
+            )
+        } else {
+            reply("এই ফোনের ভয়েস ইঞ্জিনে এই কণ্ঠ পাওয়া যায়নি।")
         }
     }
 
-    // Gemini AI-এর সঙ্গে সংযোগ
     private fun askGemini(prompt: String) {
-        runOnUiThread {
-            statusText.text = "Gemini-এর সঙ্গে সংযোগ হচ্ছে..."
-        }
+        statusText.text = "Gemini AI-এর সঙ্গে সংযোগ হচ্ছে..."
+        answerText.text = "একটু অপেক্ষা করুন..."
 
-        Thread {
+        thread {
             var connection: HttpURLConnection? = null
 
             try {
-                val url = URL(workerUrl)
-
-                connection =
-                    url.openConnection() as HttpURLConnection
-
-                connection.requestMethod = "POST"
-                connection.connectTimeout = 20000
-                connection.readTimeout = 45000
-                connection.doOutput = true
-
-                connection.setRequestProperty(
-                    "Content-Type",
-                    "application/json; charset=UTF-8"
-                )
-                connection.setRequestProperty(
-                    "Accept",
-                    "application/json"
-                )
-
-                val instruction = """
-                    তুমি BS AI Assistant।
-                    ব্যবহারকারীর প্রশ্ন মনোযোগ দিয়ে বুঝবে।
-                    প্রশ্ন অনুযায়ী সঠিক, পরিষ্কার এবং প্রাসঙ্গিক উত্তর দেবে।
-                    ব্যবহারকারী বাংলায় প্রশ্ন করলে সহজ ও স্বাভাবিক বাংলায় উত্তর দেবে।
-                    ইংরেজিতে প্রশ্ন করলে ইংরেজিতে উত্তর দিতে পারো।
-                    অপ্রয়োজনীয় কথা বলবে না।
-                    কোনো তথ্য নিশ্চিত না হলে অনুমান করে সত্য বলে জানাবে না।
-                    ব্যবহারকারী যা জানতে চেয়েছে, সেটির সম্পূর্ণ উত্তর দেওয়ার চেষ্টা করবে।
-
-                    ব্যবহারকারীর প্রশ্ন:
-                    $prompt
-                """.trimIndent()
-
-                val json = JSONObject()
-                json.put("prompt", instruction)
-
-                connection.outputStream.use {
-                    it.write(
-                        json.toString().toByteArray(Charsets.UTF_8)
+                connection = (URL(workerUrl).openConnection()
+                        as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 20000
+                    readTimeout = 45000
+                    doOutput = true
+                    doInput = true
+                    setRequestProperty(
+                        "Content-Type",
+                        "application/json; charset=UTF-8"
                     )
-                    it.flush()
+                    setRequestProperty("Accept", "application/json")
+                }
+
+                val requestBody = JSONObject().apply {
+                    put("prompt", prompt)
+                }.toString()
+
+                connection.outputStream.use { output ->
+                    output.write(requestBody.toByteArray(Charsets.UTF_8))
+                    output.flush()
                 }
 
                 val responseCode = connection.responseCode
 
-                val responseText =
+                val responseStream =
                     if (responseCode in 200..299) {
-                        connection.inputStream.bufferedReader(
-                            Charsets.UTF_8
-                        ).use { it.readText() }
+                        connection.inputStream
                     } else {
-                        connection.errorStream?.bufferedReader(
-                            Charsets.UTF_8
-                        )?.use { it.readText() } ?: ""
+                        connection.errorStream
                     }
 
+                val responseText = responseStream
+                    ?.bufferedReader(Charsets.UTF_8)
+                    ?.use { it.readText() }
+                    ?: "সার্ভার থেকে কোনো বিস্তারিত উত্তর পাওয়া যায়নি।"
+
+                val json = try {
+                    JSONObject(responseText)
+                } catch (e: Exception) {
+                    JSONObject().put("error", responseText)
+                }
+
                 if (responseCode !in 200..299) {
-                    val detail = extractServerError(responseText)
+                    val detail = json.optString(
+                        "error",
+                        "অজানা সার্ভার সমস্যা"
+                    )
 
                     throw Exception(
                         "HTTP $responseCode: $detail"
                     )
                 }
 
-                val responseJson = JSONObject(responseText)
-                val reply = responseJson.optString("reply").trim()
+                val answer = json.optString("reply", "").trim()
 
-                if (reply.isBlank()) {
+                if (answer.isEmpty()) {
                     throw Exception(
-                        "সার্ভার থেকে উত্তর পাওয়া যায়নি: " +
-                        responseText.take(250)
+                        "সার্ভার থেকে AI-এর উত্তর পাওয়া যায়নি।"
                     )
                 }
 
                 runOnUiThread {
-                    speak(reply)
+                    answerText.text = answer
+                    statusText.text = "উত্তর পাওয়া গেছে"
+                    speak(answer)
                 }
 
             } catch (e: Exception) {
                 val errorMessage =
-                    e.message ?: "অজানা নেটওয়ার্ক সমস্যা"
+                    e.message ?: "অজানা সমস্যা হয়েছে"
 
                 runOnUiThread {
-                    speak(
-                        "দুঃখিত, Gemini-এর সঙ্গে সংযোগে সমস্যা হয়েছে। " +
-                        "স্ক্রিনে বিস্তারিত দেখুন।"
-                    )
-
-                    statusText.text =
-                        "ত্রুটি: ${errorMessage.take(180)}"
+                    answerText.text = errorMessage
+                    statusText.text = "AI সংযোগে সমস্যা হয়েছে"
 
                     Toast.makeText(
                         this,
-                        errorMessage.take(200),
+                        errorMessage,
                         Toast.LENGTH_LONG
                     ).show()
+
+                    speak("দুঃখিত, উত্তর পাওয়া যায়নি।")
                 }
 
             } finally {
                 connection?.disconnect()
             }
-        }.start()
-    }
-
-    private fun extractServerError(body: String): String {
-        if (body.isBlank()) {
-            return "সার্ভার কোনো বিস্তারিত জানায়নি"
-        }
-
-        return try {
-            val json = JSONObject(body)
-            val error = json.opt("error")
-
-            when (error) {
-                is JSONObject -> error.optString(
-                    "message",
-                    error.toString()
-                )
-
-                null -> body
-
-                else -> error.toString()
-            }.take(250)
-
-        } catch (_: Exception) {
-            body.take(250)
         }
     }
 
     override fun onDestroy() {
         listeningEnabled = false
-        isRecognizing = false
-
         handler.removeCallbacksAndMessages(null)
 
         try {
-            speechRecognizer?.cancel()
             speechRecognizer?.destroy()
             tts.stop()
             tts.shutdown()
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+        }
 
         super.onDestroy()
     }
-
-    // AI Orb
-    class AIOrbView(context: android.content.Context) : View(context) {
-
-        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-        override fun onDraw(canvas: Canvas) {
-            super.onDraw(canvas)
-
-            val cx = width / 2f
-            val cy = height / 2f
-            val radius = minOf(width, height) * 0.27f
-
-            paint.style = Paint.Style.FILL
-
-            paint.shader = android.graphics.RadialGradient(
-                cx,
-                cy,
-                radius,
-                intArrayOf(
-                    Color.rgb(90, 220, 255),
-                    Color.rgb(65, 90, 255),
-                    Color.rgb(125, 40, 220),
-                    Color.TRANSPARENT
-                ),
-                null,
-                android.graphics.Shader.TileMode.CLAMP
-            )
-
-            canvas.drawCircle(cx, cy, radius, paint)
-            paint.shader = null
-
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 5f
-            paint.color = Color.rgb(120, 220, 255)
-
-            canvas.drawCircle(
-                cx,
-                cy,
-                radius * 0.72f,
-                paint
-            )
-
-            paint.style = Paint.Style.FILL
-            paint.color = Color.WHITE
-
-            canvas.drawCircle(
-                cx,
-                cy,
-                radius * 0.12f,
-                paint
-            )
-        }
-    }
 }
+
+class AIOrbView(context: android.content.Context) : View(context) {
+
+    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+
+    override fun onDraw(canvas: Canvas) {
+        super.onDraw(canvas)
+
+        val cx = width / 2f
+        val cy = height / 2f
+        val radius = minOf(width, height) * 0.35f
+
+        paint.shader = android.graphics.RadialGradient(
+            cx,
+            cy,
+            radius,
+            intArrayOf(
+              
