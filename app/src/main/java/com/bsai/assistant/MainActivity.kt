@@ -12,10 +12,8 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.speech.RecognitionListener
 import android.speech.tts.TextToSpeech
-import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
 import android.widget.*
-import android.view.ViewGroup
 import java.util.Locale
 
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
@@ -23,7 +21,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var speech: SpeechRecognizer? = null
     private var ready = false
-    private var listening = false
     private var voiceType = "female"
     private lateinit var status: TextView
 
@@ -45,7 +42,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         layout.addView(title)
 
         status = TextView(this)
-        status.text = "আপনার কথা শোনার প্রস্তুতি নিচ্ছে..."
+        status.text = "প্রস্তুত হচ্ছে..."
         status.textSize = 17f
         status.setTextColor(Color.WHITE)
         status.gravity = Gravity.CENTER
@@ -91,19 +88,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             applyVoice()
 
             tts?.setOnUtteranceProgressListener(
-                object : UtteranceProgressListener() {
+                object : android.speech.tts.UtteranceProgressListener() {
                     override fun onStart(id: String?) {}
 
                     override fun onDone(id: String?) {
-                        runOnUiThread {
-                            startListening()
-                        }
+                        runOnUiThread { startListening() }
                     }
 
                     override fun onError(id: String?) {
-                        runOnUiThread {
-                            startListening()
-                        }
+                        runOnUiThread { startListening() }
                     }
                 }
             )
@@ -118,7 +111,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val selected = voices.firstOrNull {
             val name = it.name.lowercase()
             if (voiceType == "male") {
-                name.contains("male")
+                name.contains("male") && !name.contains("female")
             } else {
                 name.contains("female")
             }
@@ -161,23 +154,17 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             speech?.setRecognitionListener(object : RecognitionListener {
 
                 override fun onReadyForSpeech(params: Bundle?) {
-                    listening = true
                     status.text = "আমি শুনছি..."
                 }
 
                 override fun onBeginningOfSpeech() {}
-
                 override fun onRmsChanged(rmsdB: Float) {}
-
                 override fun onBufferReceived(buffer: ByteArray?) {}
-
-                override fun onEndOfSpeech() {
-                    listening = false
-                }
+                override fun onEndOfSpeech() {}
 
                 override fun onError(error: Int) {
-                    listening = false
-                    if (!isFinishing && ready && tts?.isSpeaking != true) {
+                    if (!isFinishing && ready &&
+                        tts?.isSpeaking != true) {
                         status.postDelayed({
                             startListening()
                         }, 1000)
@@ -185,8 +172,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
 
                 override fun onResults(results: Bundle?) {
-                    listening = false
-
                     val words = results?.getStringArrayList(
                         SpeechRecognizer.RESULTS_RECOGNITION
                     )
@@ -199,7 +184,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {}
-
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
 
@@ -212,10 +196,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 RecognizerIntent.EXTRA_LANGUAGE,
                 Locale.getDefault().toLanguageTag()
             )
-            intent.putExtra(
-                RecognizerIntent.EXTRA_PARTIAL_RESULTS,
-                false
-            )
 
             speech?.startListening(intent)
 
@@ -226,6 +206,28 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun handleCommand(original: String) {
         val command = original.lowercase(Locale.ROOT).trim()
+
+        // নির্মাতার পরিচয়
+        if (command.contains("তোমাকে কে তৈরি করেছে") ||
+            command.contains("তোমাকে কে বানিয়েছে") ||
+            command.contains("তোমার নির্মাতা কে") ||
+            command.contains("কে তোমাকে তৈরি করেছে") ||
+            command.contains("who created you") ||
+            command.contains("who made you") ||
+            command.contains("who is your creator")) {
+
+            if (command.contains("who") ||
+                command.contains("creator") ||
+                command.contains("created") ||
+                command.contains("made you")) {
+                tts?.language = Locale.US
+                speak("I was created by Basudeb Sarkar.")
+            } else {
+                tts?.language = Locale("bn", "BD")
+                speak("আমাকে বাসুদেব সরকার তৈরি করেছেন।")
+            }
+            return
+        }
 
         if (command.contains("পুরুষ কণ্ঠ") ||
             command.contains("male voice")) {
@@ -243,44 +245,35 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
 
-        if (command.contains("facebook") ||
-            command.contains("ফেসবুক") ||
-            command.contains("youtube") ||
-            command.contains("ইউটিউব") ||
-            command.contains("whatsapp") ||
-            command.contains("হোয়াটসঅ্যাপ") ||
-            command.contains("instagram") ||
-            command.contains("ইনস্টাগ্রাম") ||
-            command.contains("tiktok") ||
-            command.contains("টিকটক")) {
+        val appName = when {
+            command.contains("facebook") || command.contains("ফেসবুক") ->
+                "facebook"
+            command.contains("youtube") || command.contains("ইউটিউব") ->
+                "youtube"
+            command.contains("whatsapp") || command.contains("হোয়াটসঅ্যাপ") ->
+                "whatsapp"
+            command.contains("instagram") || command.contains("ইনস্টাগ্রাম") ->
+                "instagram"
+            command.contains("tiktok") || command.contains("টিকটক") ->
+                "tiktok"
+            else -> null
+        }
 
-            val appName = when {
-                command.contains("facebook") || command.contains("ফেসবুক") ->
-                    "facebook"
-                command.contains("youtube") || command.contains("ইউটিউব") ->
-                    "youtube"
-                command.contains("whatsapp") || command.contains("হোয়াটসঅ্যাপ") ->
-                    "whatsapp"
-                command.contains("instagram") || command.contains("ইনস্টাগ্রাম") ->
-                    "instagram"
-                else -> "tiktok"
-            }
-
+        if (appName != null) {
             askPermissionToOpen(appName)
             return
         }
 
-        speak("আপনার কথা শুনেছি। AI সংযোগ চালু হলে আমি প্রশ্নের উত্তর দিতে পারব।")
+        speak("আপনার কথা শুনেছি। AI সংযোগ চালু হলে আমি উত্তর দিতে পারব।")
     }
 
     private fun askPermissionToOpen(appName: String) {
         val apps = packageManager.getInstalledApplications(0)
 
         val app = apps.firstOrNull {
-            val label = packageManager.getApplicationLabel(it)
+            packageManager.getApplicationLabel(it)
                 .toString().lowercase(Locale.ROOT)
-
-            label.contains(appName)
+                .contains(appName)
         }
 
         if (app == null) {
@@ -332,7 +325,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onPause() {
         super.onPause()
-        listening = false
         speech?.cancel()
         speech?.destroy()
         speech = null
