@@ -683,6 +683,7 @@ class AIOrbView(context: android.content.Context) : View(context) {
             radius,
             intArrayOf(
               
+
 class AIOrbView(context: android.content.Context) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -694,16 +695,21 @@ class AIOrbView(context: android.content.Context) : View(context) {
         val cy = height / 2f
         val radius = minOf(width, height) * 0.35f
 
-        paint.shader = null
+        paint.shader = android.graphics.RadialGradient(
+            cx,
+            cy,
+            radius,
+            intArrayOf(
+                Color.rgb(80, 220, 255),
+                Color.rgb(35, 100, 230),
+                Color.rgb(90, 35, 190)
+            ),
+            null,
+            android.graphics.Shader.TileMode.CLAMP
+        )
 
-        paint.color = Color.rgb(40, 60, 180)
         canvas.drawCircle(cx, cy, radius, paint)
-
-        paint.color = Color.rgb(30, 130, 230)
-        canvas.drawCircle(cx, cy, radius * 0.72f, paint)
-
-        paint.color = Color.rgb(80, 220, 255)
-        canvas.drawCircle(cx, cy, radius * 0.42f, paint)
+        paint.shader = null
 
         paint.color = Color.WHITE
         paint.textSize = 17f
@@ -713,4 +719,3 @@ class AIOrbView(context: android.content.Context) : View(context) {
         canvas.drawText("BS AI", cx, cy + 6f, paint)
     }
 }
-
