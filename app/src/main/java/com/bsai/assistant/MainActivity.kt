@@ -89,11 +89,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             )
         }
 
-        val messageParams = LinearLayout.LayoutParams(
-            0, 48, 1f
-        ).apply {
-            setMargins(8, 0, 8, 0)
-        }
+        val messageParams = LinearLayout.LayoutParams(0, 48, 1f)
+        messageParams.setMargins(8, 0, 8, 0)
         bottom.addView(message, messageParams)
 
         val mic = makeButton("🎙", 46)
@@ -125,7 +122,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
 
         tts = TextToSpeech(this, this)
-
         requestVoicePermission()
     }
 
@@ -141,9 +137,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 permissions.add(Manifest.permission.POST_NOTIFICATIONS)
             }
 
-            requestPermissions(
-                permissions.toTypedArray(), 100
-            )
+            requestPermissions(permissions.toTypedArray(), 100)
         } else {
             startVoiceService()
         }
@@ -325,6 +319,21 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
 
+        // ফোনের Accessibility Service-এ কমান্ড পাঠানো
+        if (
+            command.contains("নিচে স্ক্রল") ||
+            command.contains("উপরে স্ক্রল") ||
+            command.contains("পিছনে যাও") ||
+            command.contains("হোমে যাও") ||
+            command.contains("scroll down") ||
+            command.contains("scroll up") ||
+            command.contains("go back") ||
+            command.contains("go home")
+        ) {
+            sendPhoneCommand(command)
+            return
+        }
+
         val apps = listOf(
             "facebook" to "com.facebook.katana",
             "ফেসবুক" to "com.facebook.katana",
@@ -351,6 +360,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         speak(
             "Gemini AI সংযোগ চালু হলে আমি আপনার প্রশ্নের উত্তর দিতে পারব।"
         )
+    }
+
+    private fun sendPhoneCommand(command: String) {
+        val intent = Intent(PhoneControlService.ACTION_COMMAND)
+            .setPackage(packageName)
+            .putExtra("command", command)
+
+        sendBroadcast(intent)
     }
 
     private fun openApp(packageName: String) {
@@ -387,7 +404,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     override fun onPause() {
         super.onPause()
-        // VoiceService চালু থাকবে।
     }
 
     override fun onDestroy() {
@@ -423,8 +439,6 @@ class AIOrbView(context: Context) : View(context) {
 
         val cx = width / 2f
         val cy = height / 2f
-
-        // ছোট 3D Orb
         val base = min(width, height) * 0.20f
 
         angle += if (active || speaking) 2.2f else 0.65f
