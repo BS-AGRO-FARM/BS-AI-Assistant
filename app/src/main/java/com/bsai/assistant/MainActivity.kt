@@ -3,6 +3,8 @@ package com.bsai.assistant
 
 import android.app.Activity
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -25,7 +27,11 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     private lateinit var tts: TextToSpeech
     private lateinit var status: TextView
     private lateinit var input: EditText
+
     private var recognizer: SpeechRecognizer? = null
+    private val handler = Handler(Looper.getMainLooper())
+    private var listening = false
+    private var foreground = false
 
     private val bg = Color.rgb(10, 12, 30)
     private val white = Color.WHITE
@@ -67,6 +73,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(white)
             background = gradient(purple, blue, 18)
         }
+
         header.addView(logo, LinearLayout.LayoutParams(dp(52), dp(52)))
 
         val heading = TextView(this).apply {
@@ -75,15 +82,14 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             setTextColor(white)
             typeface = Typeface.DEFAULT_BOLD
         }
-        header.addView(heading)
 
+        header.addView(heading)
         page.addView(header)
 
         page.addView(space(30))
-
         page.addView(label("আপনাকে স্বাগতম!", 27f, white, true))
-        page.addView(label("আমি আপনার ব্যক্তিগত AI সহকারী", 15f,
-            Color.LTGRAY, false))
+        page.addView(label("আমি আপনার ব্যক্তিগত AI সহকারী",
+            15f, Color.LTGRAY, false))
 
         page.addView(space(35))
 
@@ -95,7 +101,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         }
 
         micCard.addView(label("আপনার কথা শুনছি", 19f, white, true))
-
         micCard.addView(space(22))
 
         val mic = TextView(this).apply {
@@ -106,42 +111,46 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             elevation = dp(12).toFloat()
             setOnClickListener { startVoice() }
         }
-        micCard.addView(mic, LinearLayout.LayoutParams(dp(112), dp(112)))
 
+        micCard.addView(mic, LinearLayout.LayoutParams(dp(112), dp(112)))
         micCard.addView(space(18))
 
-        micCard.addView(label("কথা বলতে মাইক্রোফোনে চাপ দিন",
-            14f, Color.LTGRAY, false))
+        micCard.addView(label(
+            "বলুন: হ্যালো BS, তারপর আপনার নির্দেশ দিন",
+            14f, Color.LTGRAY, false
+        ))
 
         status = label("আমি প্রস্তুত আছি 😊", 15f,
             Color.rgb(150, 190, 255), true)
+
         micCard.addView(space(15))
         micCard.addView(status)
 
-        page.addView(micCard,
-            LinearLayout.LayoutParams(-1, -2))
+        page.addView(micCard, LinearLayout.LayoutParams(-1, -2))
 
         page.addView(space(30))
-
         page.addView(label("⚡ দ্রুত অ্যাপ খুলুন", 19f, white, true))
         page.addView(space(14))
 
         val row1 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
+
         row1.addView(appCard("▶", "YouTube") {
             openApp("com.google.android.youtube", "https://m.youtube.com")
         }, weight())
+
         row1.addView(appCard("f", "Facebook") {
             openApp("com.facebook.katana", "https://m.facebook.com")
         }, weight())
-        page.addView(row1)
 
+        page.addView(row1)
         page.addView(space(12))
 
         val row2 = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
         }
+
         row2.addView(appCard("📷", "Camera") {
             try {
                 startActivity(Intent(MediaStore.ACTION_IMAGE_CAPTURE))
@@ -153,8 +162,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         row2.addView(appCard("🌐", "Chrome") {
             openApp("com.android.chrome", "https://www.google.com")
         }, weight())
-        page.addView(row2)
 
+        page.addView(row2)
         page.addView(space(28))
 
         page.addView(label("💬 AI Chat", 20f, white, true))
@@ -187,8 +196,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             background = gradient(purple, blue, 15)
             setOnClickListener { sendMessage() }
         }
-        chatBox.addView(send, LinearLayout.LayoutParams(dp(48), dp(45)))
 
+        chatBox.addView(send, LinearLayout.LayoutParams(dp(48), dp(45)))
         page.addView(chatBox)
 
         page.addView(space(25))
@@ -196,6 +205,32 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             12f, Color.GRAY, false).apply {
             gravity = Gravity.CENTER
         })
+    }
+
+    override fun onResume() {
+        super.onResume()
+        foreground = true
+
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED) {
+            handler.postDelayed({ startVoice() }, 700)
+        } else {
+            requestPermissions(
+                arrayOf(Manifest.permission.RECORD_AUDIO), 100
+            )
+        }
+    }
+
+    override fun onPause() {
+        foreground = false
+        handler.removeCallbacksAndMessages(null)
+        listening = false
+
+        recognizer?.cancel()
+        recognizer?.destroy()
+        recognizer = null
+
+        super.onPause()
     }
 
     private fun label(
@@ -278,6 +313,8 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
     }
 
     private fun startVoice() {
+        if (!foreground || listening) return
+
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             status.text = "এই ফোনে Voice Recognition পাওয়া যাচ্ছে না"
             return
@@ -285,9 +322,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO), 100
-            )
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 100)
             return
         }
 
@@ -296,12 +331,15 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             recognizer = SpeechRecognizer.createSpeechRecognizer(this)
 
             recognizer?.setRecognitionListener(object : RecognitionListener {
+
                 override fun onReadyForSpeech(params: Bundle?) {
-                    status.text = "শুনছি... এখন কথা বলুন"
+                    status.text = "শুনছি... বলুন হ্যালো BS"
                 }
 
                 override fun onBeginningOfSpeech() {}
+
                 override fun onRmsChanged(rmsdB: Float) {}
+
                 override fun onBufferReceived(buffer: ByteArray?) {}
 
                 override fun onEndOfSpeech() {
@@ -309,19 +347,29 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
 
                 override fun onError(error: Int) {
-                    status.text = "আবার মাইক্রোফোনে চাপ দিন"
+                    listening = false
+                    restartListening()
                 }
 
                 override fun onResults(results: Bundle?) {
+                    listening = false
+
                     val words = results?.getStringArrayList(
                         SpeechRecognizer.RESULTS_RECOGNITION
                     )
+
                     val command = words?.firstOrNull() ?: ""
-                    status.text = "আপনি বলেছেন: $command"
-                    handleCommand(command)
+
+                    if (command.isNotBlank()) {
+                        status.text = "আপনি বলেছেন: $command"
+                        handleCommand(command)
+                    }
+
+                    restartListening()
                 }
 
                 override fun onPartialResults(partialResults: Bundle?) {}
+
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
 
@@ -334,27 +382,59 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
             }
 
+            listening = true
             recognizer?.startListening(intent)
 
         } catch (e: Exception) {
+            listening = false
             status.text = "ভয়েস চালু করা যায়নি"
+            restartListening()
         }
     }
 
+    private fun restartListening() {
+        handler.postDelayed({
+            if (foreground && !listening) {
+                startVoice()
+            }
+        }, 1200)
+    }
+
     private fun handleCommand(command: String) {
-        val text = command.lowercase(Locale.getDefault())
+        var text = command.lowercase(Locale.ROOT)
+            .replace(",", " ")
+            .replace(".", " ")
+            .trim()
+
+        val wakeWords = listOf(
+            "হ্যালো বিএস",
+            "হ্যালো বি এস",
+            "হ্যালো বিস",
+            "hello bs",
+            "হ্যালো বাস"
+        )
+
+        var wakeFound = false
+
+        for (wake in wakeWords) {
+            if (text.contains(wake)) {
+                text = text.replace(wake, " ").trim()
+                wakeFound = true
+            }
+        }
+
+        if (!wakeFound) {
+            status.text = "নির্দেশ দিতে আগে বলুন: হ্যালো BS"
+            return
+        }
+
+        if (text.isBlank()) {
+            status.text = "জি, বলুন। আমি শুনছি।"
+            say("জি, বলুন। আমি শুনছি।")
+            return
+        }
 
         when {
-            text.contains("ইউটিউব") || text.contains("youtube") -> {
-                say("ইউটিউব খুলছি")
-                openApp("com.google.android.youtube", "https://m.youtube.com")
-            }
-
-            text.contains("ফেসবুক") || text.contains("facebook") -> {
-                say("ফেসবুক খুলছি")
-                openApp("com.facebook.katana", "https://m.facebook.com")
-            }
-
             text.contains("ক্যামেরা") || text.contains("camera") -> {
                 say("ক্যামেরা খুলছি")
                 try {
@@ -364,26 +444,106 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                 }
             }
 
-            text.contains("ক্রোম") || text.contains("chrome") -> {
-                say("ক্রোম খুলছি")
-                openApp("com.android.chrome", "https://www.google.com")
+            text.contains("গুগল") && text.contains("সার্চ") -> {
+                val query = text
+                    .replace("গুগল", "")
+                    .replace("সার্চ", "")
+                    .replace("কর", "")
+                    .trim()
+
+                startActivity(Intent(
+                    Intent.ACTION_VIEW,
+                    android.net.Uri.parse(
+                        "https://www.google.com/search?q=" +
+                            android.net.Uri.encode(query)
+                    )
+                ))
             }
 
-            else -> {
-                say("আপনার কথা শুনেছি। AI উত্তর দেওয়ার সুবিধা পরবর্তী ধাপে যুক্ত করব।")
-                status.text = "আপনার কথা শুনেছি: $command"
+            else -> openAnyApp(text)
+        }
+    }
+
+    private fun openAnyApp(command: String) {
+        val cleaned = command
+            .replace("ওপেন", "")
+            .replace("খোলো", "")
+            .replace("খুলে দাও", "")
+            .replace("চালু কর", "")
+            .replace("চালু করো", "")
+            .replace("খুলে দাও", "")
+            .replace("খুলুন", "")
+            .replace("খুলে", "")
+            .replace("করো", "")
+            .replace("কর", "")
+            .replace("open", "")
+            .replace("launch", "")
+            .replace("please", "")
+            .trim()
+
+        val aliases = mapOf(
+            "ফেসবুক" to "facebook",
+            "হোয়াটসঅ্যাপ" to "whatsapp",
+            "হোয়াটসঅ্যাপ" to "whatsapp",
+            "টিকটক" to "tiktok",
+            "ইউটিউব" to "youtube",
+            "প্লে স্টোর" to "play store",
+            "গ্যালারি" to "gallery",
+            "ক্রোম" to "chrome",
+            "মেসেঞ্জার" to "messenger",
+            "ইনস্টাগ্রাম" to "instagram",
+            "সেটিংস" to "settings"
+        )
+
+        val searchName = aliases[cleaned] ?: cleaned
+
+        try {
+            val apps = packageManager.getInstalledApplications(0)
+
+            val match = apps.firstOrNull { app ->
+                val launchIntent =
+                    packageManager.getLaunchIntentForPackage(app.packageName)
+
+                val appName = packageManager
+                    .getApplicationLabel(app)
+                    .toString()
+                    .lowercase(Locale.ROOT)
+
+                launchIntent != null &&
+                    (appName == searchName ||
+                    appName.contains(searchName))
             }
+
+            if (match != null) {
+                val launchIntent =
+                    packageManager.getLaunchIntentForPackage(match.packageName)
+
+                if (launchIntent != null) {
+                    say("${packageManager.getApplicationLabel(match)} খুলছি")
+                    startActivity(launchIntent)
+                    return
+                }
+            }
+
+            status.text = "$cleaned অ্যাপটি খুঁজে পাওয়া যায়নি"
+            say("$cleaned অ্যাপটি খুঁজে পাওয়া যায়নি")
+
+        } catch (e: Exception) {
+            status.text = "অ্যাপ খোলা যাচ্ছে না"
         }
     }
 
     private fun openApp(packageName: String, webAddress: String) {
         try {
             val launch = packageManager.getLaunchIntentForPackage(packageName)
+
             if (launch != null) {
                 startActivity(launch)
             } else {
-                startActivity(Intent(Intent.ACTION_VIEW,
-                    android.net.Uri.parse(webAddress)))
+                startActivity(Intent(
+                    Intent.ACTION_VIEW,
+                    android.net.Uri.parse(webAddress)
+                ))
             }
         } catch (e: Exception) {
             status.text = "অ্যাপটি খোলা যাচ্ছে না"
@@ -426,13 +586,18 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         ) {
             startVoice()
         } else {
-            status.text = "ভয়েস ব্যবহারের জন্য Microphone অনুমতি দিন"
+            status.text = "Microphone অনুমতি দিন"
         }
     }
 
     override fun onDestroy() {
+        handler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
-        if (::tts.isInitialized) tts.shutdown()
+
+        if (::tts.isInitialized) {
+            tts.shutdown()
+        }
+
         super.onDestroy()
     }
 }
