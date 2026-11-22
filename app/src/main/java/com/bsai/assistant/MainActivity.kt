@@ -136,7 +136,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         messageInput = EditText(this).apply {
             hint = "এখানে লিখুন..."
             textSize = 15f
-            singleLine = true
+
             setTextColor(Color.WHITE)
             setHintTextColor(Color.LTGRAY)
             setPadding(dp(14), 0, dp(14), 0)
