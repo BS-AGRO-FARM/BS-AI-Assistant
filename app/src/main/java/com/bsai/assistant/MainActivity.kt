@@ -2,16 +2,16 @@
 package com.bsai.assistant
 
 import android.app.Activity
-import android.app.AlertDialog
-import android.os.Bundle
-import android.Manifest
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.Manifest
 import android.graphics.*
 import android.graphics.drawable.GradientDrawable
-import android.speech.RecognizerIntent
-import android.speech.SpeechRecognizer
-import android.speech.RecognitionListener
+import android.os.Build
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.view.Gravity
@@ -24,12 +24,16 @@ import kotlin.math.*
 class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private var tts: TextToSpeech? = null
-    private var speech: SpeechRecognizer? = null
     private var ready = false
     private var voiceType = "female"
-    private var listening = false
     private lateinit var orb: AIOrbView
-    private lateinit var status: TextView
+
+    private val voiceReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val command = intent?.getStringExtra("command") ?: return
+            handleCommand(command)
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -39,36 +43,24 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(18, 16, 18, 18)
+            setPadding(14, 8, 14, 12)
             setBackgroundColor(Color.rgb(8, 13, 32))
-        }
-
-        val header = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            orientation = LinearLayout.HORIZONTAL
         }
 
         val title = TextView(this).apply {
             text = "BS AI ASSISTANT"
-            textSize = 23f
+            textSize = 20f
             setTextColor(Color.WHITE)
-            typeface = Typeface.create("sans-serif", Typeface.BOLD)
-            letterSpacing = 0.08f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER_VERTICAL
         }
 
-        header.addView(title, LinearLayout.LayoutParams(0, 60, 1f))
-
-        val settings = TextView(this).apply {
-            text = "⚙"
-            textSize = 27f
-            setTextColor(Color.WHITE)
-            gravity = Gravity.CENTER
-        }
-        header.addView(settings, LinearLayout.LayoutParams(48, 60))
-
-        root.addView(header)
+        root.addView(title, LinearLayout.LayoutParams(
+            ViewGroup.LayoutParams.MATCH_PARENT, 48
+        ))
 
         orb = AIOrbView(this)
+
         root.addView(
             orb,
             LinearLayout.LayoutParams(
@@ -76,63 +68,105 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             )
         )
 
-        status = TextView(this).apply {
-            text = ""
-            setTextColor(Color.LTGRAY)
-            textSize = 12f
-            gravity = Gravity.CENTER
-        }
-        root.addView(status)
-
         val bottom = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val plus = makeButton("+", 44)
+        val plus = makeButton("+", 42)
         plus.setOnClickListener { showAttachmentMenu() }
         bottom.addView(plus)
 
         val message = EditText(this).apply {
             hint = "মেসেজ লিখুন..."
-            setHintTextColor(Color.rgb(170, 180, 210))
+            setHintTextColor(Color.LTGRAY)
             setTextColor(Color.WHITE)
             textSize = 15f
             isSingleLine = true
-            setPadding(18, 0, 12, 0)
+            setPadding(14, 0, 10, 0)
             background = roundedBackground(
                 Color.rgb(32, 42, 76), 35
             )
         }
 
         val messageParams = LinearLayout.LayoutParams(
-            0, 50, 1f
+            0, 48, 1f
         ).apply {
-            setMargins(9, 0, 9, 0)
+            setMargins(8, 0, 8, 0)
         }
         bottom.addView(message, messageParams)
 
-        val mic = makeButton("🎙", 48)
+        val mic = makeButton("🎙", 46)
         mic.setOnClickListener {
-            if (!listening) startListening()
-            else {
-                speech?.cancel()
-                listening = false
-                orb.setState(false, false)
-            }
+            startVoiceService()
+            Toast.makeText(
+                this,
+                "ভয়েস অ্যাসিস্ট্যান্ট চালু করার চেষ্টা করা হচ্ছে",
+                Toast.LENGTH_SHORT
+            ).show()
         }
-        bottom.addView(mic)
 
+        bottom.addView(mic)
         root.addView(bottom)
+
         setContentView(root)
+
+        val filter = IntentFilter(VoiceService.VOICE_COMMAND)
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(
+                voiceReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(voiceReceiver, filter)
+        }
 
         tts = TextToSpeech(this, this)
 
+        requestVoicePermission()
+    }
+
+    private fun requestVoicePermission() {
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(
-                arrayOf(Manifest.permission.RECORD_AUDIO), 100
+
+            val permissions = mutableListOf(
+                Manifest.permission.RECORD_AUDIO
             )
+
+            if (Build.VERSION.SDK_INT >= 33) {
+                permissions.add(Manifest.permission.POST_NOTIFICATIONS)
+            }
+
+            requestPermissions(
+                permissions.toTypedArray(), 100
+            )
+        } else {
+            startVoiceService()
+        }
+    }
+
+    private fun startVoiceService() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            != PackageManager.PERMISSION_GRANTED) return
+
+        try {
+            val intent = Intent(this, VoiceService::class.java)
+
+            if (Build.VERSION.SDK_INT >= 26) {
+                startForegroundService(intent)
+            } else {
+                startService(intent)
+            }
+        } catch (e: Exception) {
+            Toast.makeText(
+                this,
+                "ভয়েস সার্ভিস চালু হয়নি",
+                Toast.LENGTH_LONG
+            ).show()
         }
     }
 
@@ -160,45 +194,27 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun showAttachmentMenu() {
         val options = arrayOf(
-            "🖼   ছবি যোগ করুন",
-            "📕   PDF যোগ করুন",
-            "📁   ফাইল যোগ করুন"
+            "🖼 ছবি যোগ করুন",
+            "📕 PDF যোগ করুন",
+            "📁 ফাইল যোগ করুন"
         )
 
-        AlertDialog.Builder(this)
+        android.app.AlertDialog.Builder(this)
             .setItems(options) { _, which ->
-                when (which) {
-                    0 -> openFile("image/*", 201)
-                    1 -> openFile("application/pdf", 202)
-                    2 -> openFile("*/*", 203)
+                val type = when (which) {
+                    0 -> "image/*"
+                    1 -> "application/pdf"
+                    else -> "*/*"
                 }
+
+                val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                    addCategory(Intent.CATEGORY_OPENABLE)
+                    this.type = type
+                }
+
+                startActivityForResult(intent, 201)
             }
             .show()
-    }
-
-    private fun openFile(type: String, code: Int) {
-        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            this.type = type
-        }
-        startActivityForResult(intent, code)
-    }
-
-    @Deprecated("Used for document selection")
-    override fun onActivityResult(
-        requestCode: Int,
-        resultCode: Int,
-        data: Intent?
-    ) {
-        super.onActivityResult(requestCode, resultCode, data)
-
-        if (resultCode == RESULT_OK && data?.data != null) {
-            Toast.makeText(
-                this,
-                "ফাইল নির্বাচন হয়েছে",
-                Toast.LENGTH_SHORT
-            ).show()
-        }
     }
 
     override fun onInit(result: Int) {
@@ -218,13 +234,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
                     override fun onDone(id: String?) {
                         runOnUiThread {
                             orb.setState(false, false)
-                            startListening()
+                            sendBroadcast(
+                                Intent(VoiceService.ACTION_RESUME)
+                                    .setPackage(packageName)
+                            )
                         }
                     }
 
                     override fun onError(id: String?) {
                         runOnUiThread {
                             orb.setState(false, false)
+                            sendBroadcast(
+                                Intent(VoiceService.ACTION_RESUME)
+                                    .setPackage(packageName)
+                            )
                         }
                     }
                 }
@@ -238,10 +261,10 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         val voices = tts?.voices ?: return
 
         val selected = voices.firstOrNull {
-            val name = it.name.lowercase()
+            val name = it.name.lowercase(Locale.ROOT)
+
             if (voiceType == "male") {
-                name.contains("male") &&
-                    !name.contains("female")
+                name.contains("male") && !name.contains("female")
             } else {
                 name.contains("female")
             }
@@ -254,86 +277,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
 
     private fun speak(text: String) {
         if (!ready) return
+
+        sendBroadcast(
+            Intent(VoiceService.ACTION_PAUSE)
+                .setPackage(packageName)
+        )
+
         orb.setState(false, true)
+
         tts?.speak(
             text,
             TextToSpeech.QUEUE_FLUSH,
             null,
             "BS_REPLY"
         )
-    }
-
-    private fun startListening() {
-        if (!ready || isFinishing) return
-        if (tts?.isSpeaking == true) return
-
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO)
-            != PackageManager.PERMISSION_GRANTED) return
-
-        try {
-            speech?.destroy()
-            speech = SpeechRecognizer.createSpeechRecognizer(this)
-
-            speech?.setRecognitionListener(
-                object : RecognitionListener {
-                    override fun onReadyForSpeech(params: Bundle?) {
-                        listening = true
-                        orb.setState(true, false)
-                    }
-
-                    override fun onBeginningOfSpeech() {}
-
-                    override fun onRmsChanged(rmsdB: Float) {
-                        orb.setLevel(
-                            ((rmsdB + 2f) / 12f).coerceIn(0f, 1f)
-                        )
-                    }
-
-                    override fun onBufferReceived(buffer: ByteArray?) {}
-                    override fun onEndOfSpeech() {
-                        listening = false
-                    }
-
-                    override fun onError(error: Int) {
-                        listening = false
-                        orb.setState(false, false)
-                    }
-
-                    override fun onResults(results: Bundle?) {
-                        listening = false
-                        val words = results?.getStringArrayList(
-                            SpeechRecognizer.RESULTS_RECOGNITION
-                        )
-
-                        if (!words.isNullOrEmpty()) {
-                            handleCommand(words[0])
-                        } else {
-                            startListening()
-                        }
-                    }
-
-                    override fun onPartialResults(results: Bundle?) {}
-                    override fun onEvent(type: Int, params: Bundle?) {}
-                }
-            )
-
-            val intent = Intent(
-                RecognizerIntent.ACTION_RECOGNIZE_SPEECH
-            )
-            intent.putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
-            )
-            intent.putExtra(
-                RecognizerIntent.EXTRA_LANGUAGE,
-                Locale.getDefault().toLanguageTag()
-            )
-
-            speech?.startListening(intent)
-
-        } catch (e: Exception) {
-            status.text = "মাইক্রোফোন চালু করা যায়নি"
-        }
     }
 
     private fun handleCommand(original: String) {
@@ -343,7 +300,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             command.contains("female voice")) {
             voiceType = "female"
             applyVoice()
-            startListening()
             return
         }
 
@@ -351,7 +307,6 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             command.contains("male voice")) {
             voiceType = "male"
             applyVoice()
-            startListening()
             return
         }
 
@@ -359,6 +314,7 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             command.contains("তোমাকে কে বানিয়েছে") ||
             command.contains("who created you") ||
             command.contains("who made you")) {
+
             if (command.contains("who")) {
                 tts?.language = Locale.US
                 speak("I was created by Basudeb Sarkar.")
@@ -369,22 +325,26 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
             return
         }
 
-        val appName = when {
-            command.contains("facebook") ||
-                command.contains("ফেসবুক") -> "facebook"
-            command.contains("youtube") ||
-                command.contains("ইউটিউব") -> "youtube"
-            command.contains("whatsapp") ||
-                command.contains("হোয়াটসঅ্যাপ") -> "whatsapp"
-            command.contains("instagram") ||
-                command.contains("ইনস্টাগ্রাম") -> "instagram"
-            command.contains("tiktok") ||
-                command.contains("টিকটক") -> "tiktok"
-            else -> null
-        }
+        val apps = listOf(
+            "facebook" to "com.facebook.katana",
+            "ফেসবুক" to "com.facebook.katana",
+            "youtube" to "com.google.android.youtube",
+            "ইউটিউব" to "com.google.android.youtube",
+            "whatsapp" to "com.whatsapp",
+            "হোয়াটসঅ্যাপ" to "com.whatsapp",
+            "instagram" to "com.instagram.android",
+            "ইনস্টাগ্রাম" to "com.instagram.android",
+            "tiktok" to "com.zhiliaoapp.musically",
+            "টিকটক" to "com.zhiliaoapp.musically"
+        )
 
-        if (appName != null) {
-            askPermissionToOpen(appName)
+        val matched = apps
+            .map { Pair(it, command.lastIndexOf(it.first)) }
+            .filter { it.second >= 0 }
+            .maxByOrNull { it.second }
+
+        if (matched != null) {
+            openApp(matched.first.second)
             return
         }
 
@@ -393,30 +353,20 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         )
     }
 
-    private fun askPermissionToOpen(appName: String) {
-        val apps = packageManager.getInstalledApplications(0)
+    private fun openApp(packageName: String) {
+        val launchIntent =
+            packageManager.getLaunchIntentForPackage(packageName)
 
-        val app = apps.firstOrNull {
-            packageManager.getApplicationLabel(it)
-                .toString().lowercase(Locale.ROOT)
-                .contains(appName)
-        }
-
-        if (app == null) {
-            speak("এই অ্যাপটি খুঁজে পাইনি।")
-            return
-        }
-
-        AlertDialog.Builder(this)
-            .setTitle("আপনার অনুমতি দরকার")
-            .setMessage("$appName খুলব কি?")
-            .setPositiveButton("হ্যাঁ") { _, _ ->
-                val launch = packageManager
-                    .getLaunchIntentForPackage(app.packageName)
-                if (launch != null) startActivity(launch)
+        if (launchIntent != null) {
+            try {
+                launchIntent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(launchIntent)
+            } catch (e: Exception) {
+                speak("অ্যাপটি খোলা যায়নি।")
             }
-            .setNegativeButton("না", null)
-            .show()
+        } else {
+            speak("এই অ্যাপটি ফোনে ইনস্টল করা নেই।")
+        }
     }
 
     override fun onRequestPermissionsResult(
@@ -427,30 +377,31 @@ class MainActivity : Activity(), TextToSpeech.OnInitListener {
         super.onRequestPermissionsResult(
             requestCode, permissions, grantResults
         )
+
         if (requestCode == 100 &&
-            grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-            if (ready) speak("BS AI Assistant-এ আপনাকে স্বাগতম।")
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO)
+            == PackageManager.PERMISSION_GRANTED) {
+            startVoiceService()
         }
     }
 
     override fun onPause() {
         super.onPause()
-        speech?.cancel()
-        speech?.destroy()
-        speech = null
-        listening = false
+        // VoiceService চালু থাকবে।
     }
 
     override fun onDestroy() {
-        speech?.destroy()
+        try {
+            unregisterReceiver(voiceReceiver)
+        } catch (_: Exception) {}
+
         tts?.stop()
         tts?.shutdown()
         super.onDestroy()
     }
 }
 
-class AIOrbView(context: android.content.Context) : View(context) {
+class AIOrbView(context: Context) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
     private var angle = 0f
@@ -467,32 +418,29 @@ class AIOrbView(context: android.content.Context) : View(context) {
         invalidate()
     }
 
-    fun setLevel(value: Float) {
-        level = value
-        invalidate()
-    }
-
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
         val cx = width / 2f
         val cy = height / 2f
-        val base = min(width, height) * 0.30f
+
+        // ছোট 3D Orb
+        val base = min(width, height) * 0.20f
 
         angle += if (active || speaking) 2.2f else 0.65f
+
         val pulse = sin(Math.toRadians(angle.toDouble())).toFloat()
         val power = if (active || speaking) {
-            1f + level * 0.15f
+            1f + level * 0.12f
         } else {
             1f + pulse * 0.025f
         }
 
         val radius = base * power
 
-        // Outer glow
         paint.style = Paint.Style.FILL
         paint.shader = RadialGradient(
-            cx, cy, radius * 1.65f,
+            cx, cy, radius * 1.6f,
             intArrayOf(
                 Color.argb(85, 100, 60, 255),
                 Color.argb(35, 20, 200, 255),
@@ -501,15 +449,16 @@ class AIOrbView(context: android.content.Context) : View(context) {
             null,
             Shader.TileMode.CLAMP
         )
-        canvas.drawCircle(cx, cy, radius * 1.65f, paint)
+
+        canvas.drawCircle(cx, cy, radius * 1.6f, paint)
         paint.shader = null
 
-        // Rotating colorful rings
         canvas.save()
         canvas.rotate(angle, cx, cy)
 
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = dp(3f)
+        paint.strokeWidth = dp(2.5f)
+
         paint.shader = SweepGradient(
             cx, cy,
             intArrayOf(
@@ -523,28 +472,32 @@ class AIOrbView(context: android.content.Context) : View(context) {
             null
         )
 
-        val oval = RectF(
-            cx - radius * 1.32f,
-            cy - radius * 0.55f,
-            cx + radius * 1.32f,
-            cy + radius * 0.55f
+        canvas.drawOval(
+            RectF(
+                cx - radius * 1.35f,
+                cy - radius * 0.55f,
+                cx + radius * 1.35f,
+                cy + radius * 0.55f
+            ),
+            paint
         )
-        canvas.drawOval(oval, paint)
-        paint.shader = null
 
-        paint.strokeWidth = dp(2f)
-        paint.color = Color.rgb(75, 220, 255)
-        val oval2 = RectF(
-            cx - radius * 1.27f,
-            cy - radius * 0.48f,
-            cx + radius * 1.27f,
-            cy + radius * 0.48f
-        )
+        paint.shader = null
+        paint.color = Color.CYAN
         canvas.rotate(70f, cx, cy)
-        canvas.drawOval(oval2, paint)
+
+        canvas.drawOval(
+            RectF(
+                cx - radius * 1.25f,
+                cy - radius * 0.48f,
+                cx + radius * 1.25f,
+                cy + radius * 0.48f
+            ),
+            paint
+        )
+
         canvas.restore()
 
-        // 3D sphere
         paint.style = Paint.Style.FILL
         paint.shader = RadialGradient(
             cx - radius * 0.34f,
@@ -552,20 +505,21 @@ class AIOrbView(context: android.content.Context) : View(context) {
             radius * 1.55f,
             intArrayOf(
                 Color.WHITE,
-                Color.rgb(100, 245, 255),
-                Color.rgb(40, 115, 255),
+                Color.CYAN,
+                Color.BLUE,
                 Color.rgb(120, 40, 230),
-                Color.rgb(235, 40, 180),
+                Color.MAGENTA,
                 Color.rgb(15, 18, 65)
             ),
-            floatArrayOf(0f, 0.13f, 0.38f, 0.65f, 0.83f, 1f),
+            null,
             Shader.TileMode.CLAMP
         )
+
         canvas.drawCircle(cx, cy, radius, paint)
         paint.shader = null
 
-        // Light reflection
         paint.color = Color.argb(100, 255, 255, 255)
+
         canvas.drawOval(
             RectF(
                 cx - radius * 0.55f,
@@ -576,33 +530,30 @@ class AIOrbView(context: android.content.Context) : View(context) {
             paint
         )
 
-        // Moving AI waves
         paint.style = Paint.Style.STROKE
-        paint.strokeWidth = dp(4f)
+        paint.strokeWidth = dp(3f)
         paint.strokeCap = Paint.Cap.ROUND
+
         paint.shader = LinearGradient(
             cx - radius,
             cy,
             cx + radius,
             cy,
-            intArrayOf(
-                Color.CYAN,
-                Color.WHITE,
-                Color.MAGENTA
-            ),
+            intArrayOf(Color.CYAN, Color.WHITE, Color.MAGENTA),
             null,
             Shader.TileMode.CLAMP
         )
 
         val path = Path()
+
         for (i in 0..80) {
             val x = cx - radius * 0.75f +
-                (radius * 1.5f * i / 80f)
-            val wave = sin(
-                i * 0.25 + angle * 0.08
-            ).toFloat()
-            val y = cy + wave *
-                dp(12f) * (1f + level * 1.8f)
+                radius * 1.5f * i / 80f
+
+            val wave = sin(i * 0.25 + angle * 0.08).toFloat()
+
+            val y = cy + wave * dp(9f) *
+                (1f + level * 1.5f)
 
             if (i == 0) path.moveTo(x, y)
             else path.lineTo(x, y)
@@ -610,20 +561,6 @@ class AIOrbView(context: android.content.Context) : View(context) {
 
         canvas.drawPath(path, paint)
         paint.shader = null
-
-        // Shine dots
-        paint.style = Paint.Style.FILL
-        paint.color = Color.WHITE
-        canvas.drawCircle(
-            cx + radius * 0.82f,
-            cy - radius * 0.75f,
-            dp(3f), paint
-        )
-        canvas.drawCircle(
-            cx - radius * 0.85f,
-            cy + radius * 0.55f,
-            dp(2.5f), paint
-        )
 
         postInvalidateDelayed(30)
     }
