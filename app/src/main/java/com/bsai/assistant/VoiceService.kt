@@ -87,12 +87,15 @@ class VoiceService : Service() {
                 .createNotificationChannel(channel)
         }
 
-        val notification = if (Build.VERSION.SDK_INT >= 26) {
+        val builder = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, channelId)
         } else {
             @Suppress("DEPRECATION")
             Notification.Builder(this)
-        }.setContentTitle("BS AI Assistant")
+        }
+
+        val notification = builder
+            .setContentTitle("BS AI Assistant")
             .setContentText("ভয়েস অ্যাসিস্ট্যান্ট চালু আছে")
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .build()
@@ -155,14 +158,20 @@ class VoiceService : Service() {
                         if (spoken.isNotBlank()) {
                             Log.d("BSVoice", "শোনা হয়েছে: $spoken")
 
-                            sendBroadcast(
-                                Intent(VOICE_COMMAND)
-                                    .setPackage(packageName)
-                                    .putExtra("command", spoken)
-                            )
-                        }
+                            // কথা পাওয়ার ১০ সেকেন্ড পরে কমান্ড পাঠাবে
+                            handler.postDelayed({
+                                if (!paused) {
+                                    sendBroadcast(
+                                        Intent(VOICE_COMMAND)
+                                            .setPackage(packageName)
+                                            .putExtra("command", spoken)
+                                    )
+                                }
+                            }, 10_000)
 
-                        scheduleRestart()
+                        } else {
+                            scheduleRestart()
+                        }
                     }
 
                     override fun onPartialResults(
@@ -207,7 +216,7 @@ class VoiceService : Service() {
         if (!paused) {
             handler.postDelayed({
                 startListening()
-            }, 1200)
+            }, 2500)
         }
     }
 
