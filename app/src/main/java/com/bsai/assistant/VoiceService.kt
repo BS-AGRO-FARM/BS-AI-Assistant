@@ -6,6 +6,9 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.content.Intent
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.Handler
@@ -18,12 +21,54 @@ import android.util.Log
 
 class VoiceService : Service() {
 
+    companion object {
+        const val VOICE_COMMAND = "com.bsai.assistant.VOICE_COMMAND"
+        const val ACTION_PAUSE = "com.bsai.assistant.PAUSE_VOICE"
+        const val ACTION_RESUME = "com.bsai.assistant.RESUME_VOICE"
+    }
+
     private var recognizer: SpeechRecognizer? = null
     private val handler = Handler(Looper.getMainLooper())
     private var listening = false
+    private var paused = false
+
+    private val controlReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                ACTION_PAUSE -> {
+                    paused = true
+                    handler.removeCallbacksAndMessages(null)
+                    recognizer?.cancel()
+                    listening = false
+                }
+
+                ACTION_RESUME -> {
+                    paused = false
+                    startListening()
+                }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
+
+        val filter = IntentFilter().apply {
+            addAction(ACTION_PAUSE)
+            addAction(ACTION_RESUME)
+        }
+
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(
+                controlReceiver,
+                filter,
+                Context.RECEIVER_NOT_EXPORTED
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(controlReceiver, filter)
+        }
+
         createNotification()
         startListening()
     }
@@ -31,29 +76,26 @@ class VoiceService : Service() {
     private fun createNotification() {
         val channelId = "bs_voice_channel"
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        if (Build.VERSION.SDK_INT >= 26) {
             val channel = NotificationChannel(
                 channelId,
                 "BS Voice Assistant",
                 NotificationManager.IMPORTANCE_LOW
             )
+
             getSystemService(NotificationManager::class.java)
                 .createNotificationChannel(channel)
         }
 
         val notification = if (Build.VERSION.SDK_INT >= 26) {
             Notification.Builder(this, channelId)
-                .setContentTitle("BS AI Assistant")
-                .setContentText("ভয়েস অ্যাসিস্ট্যান্ট চালু আছে")
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .build()
         } else {
+            @Suppress("DEPRECATION")
             Notification.Builder(this)
-                .setContentTitle("BS AI Assistant")
-                .setContentText("ভয়েস অ্যাসিস্ট্যান্ট চালু আছে")
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now)
-                .build()
-        }
+        }.setContentTitle("BS AI Assistant")
+            .setContentText("ভয়েস অ্যাসিস্ট্যান্ট চালু আছে")
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .build()
 
         if (Build.VERSION.SDK_INT >= 29) {
             startForeground(
@@ -67,10 +109,11 @@ class VoiceService : Service() {
     }
 
     private fun startListening() {
-        if (listening) return
+        if (paused || listening) return
 
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Log.e("BSVoice", "Speech recognition unavailable")
+            scheduleRestart()
             return
         }
 
@@ -97,7 +140,7 @@ class VoiceService : Service() {
 
                     override fun onError(error: Int) {
                         listening = false
-                        restartListening()
+                        scheduleRestart()
                     }
 
                     override fun onResults(results: android.os.Bundle?) {
@@ -107,16 +150,19 @@ class VoiceService : Service() {
                             SpeechRecognizer.RESULTS_RECOGNITION
                         )
 
-                        val spoken = words?.firstOrNull() ?: ""
+                        val spoken = words?.firstOrNull().orEmpty()
 
-                        Log.d("BSVoice", "শোনা হয়েছে: $spoken")
+                        if (spoken.isNotBlank()) {
+                            Log.d("BSVoice", "শোনা হয়েছে: $spoken")
 
-                        sendBroadcast(
-                            Intent("com.bsai.assistant.VOICE_COMMAND")
-                                .putExtra("command", spoken)
-                        )
+                            sendBroadcast(
+                                Intent(VOICE_COMMAND)
+                                    .setPackage(packageName)
+                                    .putExtra("command", spoken)
+                            )
+                        }
 
-                        restartListening()
+                        scheduleRestart()
                     }
 
                     override fun onPartialResults(
@@ -137,22 +183,32 @@ class VoiceService : Service() {
                     RecognizerIntent.EXTRA_LANGUAGE_MODEL,
                     RecognizerIntent.LANGUAGE_MODEL_FREE_FORM
                 )
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "bn-BD")
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 1)
+                putExtra(
+                    RecognizerIntent.EXTRA_LANGUAGE,
+                    "bn-BD"
+                )
+                putExtra(
+                    RecognizerIntent.EXTRA_MAX_RESULTS,
+                    1
+                )
             }
 
             recognizer?.startListening(intent)
 
         } catch (e: Exception) {
             listening = false
-            restartListening()
+            scheduleRestart()
         }
     }
 
-    private fun restartListening() {
-        handler.postDelayed({
-            if (!listening) startListening()
-        }, 1200)
+    private fun scheduleRestart() {
+        handler.removeCallbacksAndMessages(null)
+
+        if (!paused) {
+            handler.postDelayed({
+                startListening()
+            }, 1200)
+        }
     }
 
     override fun onStartCommand(
@@ -164,10 +220,15 @@ class VoiceService : Service() {
     }
 
     override fun onDestroy() {
-        listening = false
+        paused = true
         handler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         recognizer = null
+
+        try {
+            unregisterReceiver(controlReceiver)
+        } catch (_: Exception) {}
+
         super.onDestroy()
     }
 
